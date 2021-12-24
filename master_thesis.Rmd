@@ -1,0 +1,713 @@
+---
+title: "Master Thesis"
+author: "Ana M Gómez Martínez"
+date: "24/12/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+pacman::p_load(readxl, enrichR, reticulate, stringr, dplyr, stringdist, flavin, org.Hs.eg.db, ggplot2, ggdendro, MASS, cluster, writexl, simplifyEnrichment, useful, GO.db, tidyr, DOSE, AnnotationDbi, clusterProfiler, topGO, ComplexHeatmap, ggupset, enrichplot, wesanderson, reshape2) # load the packages
+```
+
+###################################################
+# 0. Collecting the Data
+###################################################
+
+```{r}
+### exer dataset:
+exer <- c("FABP3", "HADHB", "SLC25A20", "LDHD", "PDK2", "DLST", "PET112L", "MRPS2", "MRPS18B", "PC", "MRPL33", "MRPL12", "ENO3", "PECI (ECI2)", "GPI", "HADHA", "EF3K", "NR2F2")
+exer <- unique(exer)
+#write_xlsx(as.data.frame(exer),"./results/exer/exer_genes.xlsx", col_names = F)
+
+### bc dataset:
+bc <- read_excel("bc.xls")
+bc <- as.character(unlist(c(bc[,3]), use.names=FALSE))
+bc <- bc[!is.na(bc)]
+bc <- unique(bc)
+#write_xlsx(as.data.frame(bc),"./results/bc/bc_genes.xlsx", col_names = F)
+
+### enviro dataset:
+enviro <- c("MYD88","LTB","BLNK","CCL19","CD14","CD72","BLNK","CD19","MYD88","IRF1","CD14","CD2","CD19","CD14","CCL5","MYD88","CD14","BLNK","CD19", "LTB","IRF1","CD2","CCL19","CD14", "CCL19","CD14", "CCL5","CCL19","HEXB","CCL5","CCL19","CCL5","NT5E", "CCL5","P2RX4", "CCL5","CCL19", "CCL5","NT5E","CCL5","CCL19","CD72","CD2","LTB","UFD1L","P2RX4","CCL5","CD14","CD14","CCL5","MYD88", "HEXB","CCL5","CCL19", "NT5E")
+enviro <- unique(enviro)
+#write_xlsx(as.data.frame(enviro),"./results/enviro/enviro_genes.xlsx", col_names = F)
+
+### alz dataset
+alz <- c("ATP6V1E1","NRXN3","MKKS","GNG3","GABBR2","PABPC3","ARF5","SAMD12","SCG5","RAB3C","MTX2","ATCAY","PTS","HENMT1","NDUFV2","MFSD4","CISD1","KIFAP3","TBL1X","WWTR1","PPIA","NDUFS3","REEP1","FIBP","GOT1","SORBS1","TMEM25","TRIM38","PI4KA","RUSC1-AS1","TGFBR3","PEBP1","ZFP36L1","ACTR10","ITPRIPL2","NETO2","LRRC49","C12orf4","USP14","GHITM","RAP1GDS1","NAV2","TMEM261","PEG3","ITFG1","DLGAP1-AS1","NDUFAF5","KCNV1","AMIGO1","ATP6AP1")
+alz <- unique(alz)
+#write_xlsx(as.data.frame(alz),"./results/alz/alz_genes.xlsx", col_names = F)
+
+### cirro dataset
+cirro <- read_excel("cirrhosis.xls")
+cirro <- subset(cirro, cirro[,2] > 1 & cirro[,3] <= 0.05)
+cirro <- c(cirro[,1])
+cirro <- as.character(unlist(cirro, use.names=FALSE))
+cirro <- unique(cirro)
+#write_xlsx(as.data.frame(cirro),"./results/cirro/cirro_genes.xlsx", col_names = F)
+```
+
+
+###################################################
+# DEFINE WHICH DATASET YOU WANT TO USE
+###################################################
+```{r}
+### Define as my_df the dataset that you want to study. It is important, because the whole script uses 'my_df' variable
+my_df <- exer ########## write the name of the dataset
+my_df_name <- "exer" ########## write the name of the dataset
+
+#dir.create('./results')
+dir.create(paste('./results/',my_df_name,sep=""))
+```
+
+###################################################
+###################################################
+
+
+###################################################
+# 1. Omitting Housekeeping Genes if desired
+###################################################
+
+```{r}
+housekeeping_genes <- read.table("housekeeping_genes.txt")
+housekeeping_genes <- housekeeping_genes[,1]
+HK_genes_list <- intersect(my_df,housekeeping_genes) # list of HK genes within your list
+list_no_HK <- setdiff(my_df,housekeeping_genes) # list without HK genes
+
+### Input and if function. If you want to study all genes, then type N. If you want to study only the genes which are not HK, then type Y. In this second case, the variable 'my_df' will store the 'list_no_HK' list.
+HK_Y_N <- readline(prompt="Do you want to study only those genes which are NOT Housekeeping? Y/N: ")
+   if(HK_Y_N == "N") {
+     print("Okay, then all genes will be considered")} else if (HK_Y_N == "Y") {
+       print("Okay, then only the non housekeeping genes will be studied")
+       my_df <- list_no_HK} 
+```
+
+###################################################
+# 2. Gene Functional Annotation
+###################################################
+
+```{r}
+# https://cran.r-project.org/web/packages/enrichR/vignettes/enrichR.html
+
+listEnrichrSites()
+setEnrichrSite("Enrichr") # Human genes
+websiteLive <- TRUE
+dbs <- listEnrichrDbs()
+if (is.null(dbs)) websiteLive <- FALSE
+if (websiteLive) head(dbs)
+dbs <- c("GO_Biological_Process_2021")
+
+### annotation function -> insert 'my_df', then a plot will be saved and a dataframe with the annotation fo the gene list will be stored
+annotation <- function(df)
+  {if (websiteLive) 
+    {enriched <- enrichr(df, dbs)
+    png(file=paste('./results/',my_df_name,'/',my_df_name,'_barplot_enrichr.png', sep = ""))
+    if (websiteLive) print(plotEnrich(enriched[[1]], showTerms = 30, numChar = 50, y = "Count", orderBy = "Adjusted.P.value"))
+    dev.off()}
+  annot.df <- if (websiteLive) enriched[["GO_Biological_Process_2021"]] # Biological Process
+  annot.df}
+
+my_df_annot <- annotation(my_df)
+#nrow(subset(my_df_annot, Adjusted.P.value <= 0.05)) # check how many functions with sig Adj.P.value
+```
+
+############## VERY IMPORTANT!!! ############## 
+
+For the Master Thesis, the next line of code 'my_df_annot <- subset(my_df_annot, Adjusted.P.value <= 0.05)' was not executed, because it was desired to use the greater number of functions. But for the real application of this tool, the filtering by the Adjusted.P.value should be done. 
+```{r}
+my_df_annot <- subset(my_df_annot, Adjusted.P.value <= 0.05)
+```
+
+###############################################
+
+```{r}
+### .gaf file in order to complete de list of genes after annotation, because they are some left..
+go <- read_gaf("goa_human.gaf", database = org.Hs.eg.db, accession = "ENSEMBL", filter.evidence = "IEA") # read .gaf file
+go_genes <- unique(go[,c(3,5)]) # select the columns 'DB_Object_Symbol' and 'GO_ID'
+go_genes <- aggregate(DB_Object_Symbol ~., go_genes, toString) # aggregate gene names for each GO_IDs
+
+### genes.gaf function <- complete 'my_df_annot' with more Genes
+genes.gaf <- function(annot.df){
+  annot.df$GO_ID <- as.character(lapply(annot.df$Term, function (x) {str_match_all(x, "(?<=\\().+?(?=\\))")[[1]][,1]}))
+  all.genes <- annot.df[,c("Term","Genes","GO_ID")]
+  all.genes <- na.omit(merge(all.genes, go_genes, by="GO_ID", all.x=TRUE))
+  all.genes}
+
+all_genes_my_df_annot <- genes.gaf(my_df_annot) # 4 columns: GO_ID, Term, Genes and DB_Object_Symbol. DB_Object_Symbol contains all the genes that belong to the GO_ID
+```
+
+###################################################
+# 3. Clustering Similar Functions
+###################################################
+
+#######################
+####### Jaccard #######
+#######################
+
+```{r}
+### jaccard function -> compute the jaccard value between the genes of the 2 compared functions
+jaccard <- function(annot.df){
+  functions.genes <- annot.df[,c(2,4)] # columns Term and DB_Object_Symbol
+  matriz <- matrix(data=NA, nrow=nrow(annot.df)^2, ncol=5) # create an empty matrix with the right dimensions
+  n <- 1
+  for(i in 1:(nrow(functions.genes)))
+     {
+    for(j in 1:nrow(functions.genes))
+     { # compare the strings v1 and v2, which are the list of genes, in order to obtain the common genes and thus the jaccard value
+       v1 <- unlist(strsplit(functions.genes[i,2],","))
+       v2 <- unlist(strsplit(functions.genes[j,2],","))
+       
+       # fulfil the matrix
+       matriz[n,1] <- functions.genes[i,1]
+       matriz[n,2] <- functions.genes[j,1]
+       matriz[n,3] <- round(length(intersect(v1, v2)) / length(union(v1,v2)),3)
+       matriz[n,4] <- functions.genes[i,2]
+       matriz[n,5] <- functions.genes[j,2]
+       n <- n +1
+     }
+  }
+  matriz
+}
+
+similarity_functions_jac <- jaccard(all_genes_my_df_annot)
+write.table(similarity_functions_jac[,c(1:3)], paste('./results/',my_df_name,'/',my_df_name,'_similarity_functions_jac.txt', sep = ""), append = FALSE, sep = " ", dec = ".",row.names = F, col.names = F)
+```
+
+#######################
+###### TensorFlow #####
+#######################
+
+```{r}
+# Preparing the data sets for importing to python:
+my_annot_df <- all_genes_my_df_annot[,2]
+path_py <- paste('./results/',my_df_name,'/',my_df_name,'_similarity_functions_tensor.txt', sep = "")
+```
+
+```{python}
+# https://stackoverflow.com/questions/8897593/how-to-compute-the-similarity-between-two-text-documents
+### Loading the libraries and the encoder:
+import tensorflow_hub as hub
+import tensorflow.compat.v1 as tf
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+import re
+
+module_url = "https://tfhub.dev/google/universal-sentence-encoder/1?tf-hub-format=compressed"
+embed = hub.Module(module_url) # importing the encoder
+
+my_annot_df_p = r.my_annot_df # importing de r dataframe
+path_py = r.path_py
+
+### sim_tensor function -> compute the tensor value between the genes of the 2 compared functions
+def sim_tensor(ANNOT,PATH):
+
+  df = pd.DataFrame(ANNOT, columns=['annotation']) # convert the list of functions into a pandas dataframe
+  df['annotation'] = df['annotation'].map(lambda x: re.sub(r'(\w+)\s(\(GO:\d+\))', r'\1', str(x))) # take out the GO_ID within the term
+  
+  functions_list = df['annotation'].tolist()
+  functions_list = functions_list
+  
+  # do the magic of the TensorFlow
+  similarity_input_placeholder = tf.placeholder(tf.string, shape=(None))
+  similarity_message_encodings = embed(similarity_input_placeholder)
+  with tf.Session() as session:
+    session.run(tf.global_variables_initializer())
+    session.run(tf.tables_initializer())
+    message_embeddings_ = session.run(similarity_message_encodings, feed_dict={similarity_input_placeholder: functions_list})
+    corr = np.inner(message_embeddings_, message_embeddings_)
+      
+  #with open('./results/%s_similarity_functions_tensor.txt' %(namefile), 'w') as file: # write a matrix file with the similarities values obtained with TensorFlow_Hub
+  with open(PATH, 'w') as file:
+    for i in range(len(functions_list)): # ylabels
+      for j in range(len(functions_list)): # xlabels
+        file.write(str(functions_list[i]) + "\t" + str(functions_list[j]) + "\t" + str(corr[i, j]) + "\n")
+
+### Calling the function:
+sim_tensor(my_annot_df_p,path_py)
+```
+
+```{r}
+df_tensor  <- read.csv(file = paste('./results/',my_df_name,'/',my_df_name,'_similarity_functions_tensor.txt', sep = ""), sep = "\t", header = F)
+df_jac <- similarity_functions_jac[,c(1:3)]
+```
+
+```{python}
+import pandas as pd
+import re
+
+### no_go_annot_jac function -> cut the GO_ID within the functions
+def no_go_annot_jac(DF):
+  df = pd.DataFrame(DF, columns=['V1','V2','V3']) # convert into a pandas dataframe
+  df['V1'] = df['V1'].map(lambda x: re.sub(r'(\w+)\s(\(GO:\d+\))', r'\1', str(x))) # cut the GO_ID
+  df['V2'] = df['V2'].map(lambda x: re.sub(r'(\w+)\s(\(GO:\d+\))', r'\1', str(x))) # cut the GO_ID
+  df['V3'] = df['V3'].apply(lambda x: x.replace(',','.'))
+  df['V3'] = df['V3'].to_numpy().astype(float)
+  return df
+
+no_go_jac = no_go_annot_jac(r.df_jac)
+```
+
+```{r}
+similarities_jac_tensor <- merge(df_tensor,py$no_go_jac, by = c("V1","V2"),all = TRUE, sort = F, suffix = c("_tensor", "_jac")) # merging in a same dataframe the functions, and the similarities obtained with tensorFlow and with jaccard
+names(similarities_jac_tensor) <- c('function_1', 'function_2', 'similarity_tensorFlow', 'similarity_jaccard')
+print(cor.test(similarities_jac_tensor[,3],similarities_jac_tensor[,4])) # cor.test
+save(similarities_jac_tensor, file=paste('./results/',my_df_name,'/',"similarities_jac_tensor_",my_df_name,".RData",sep="")) # save as .RData
+
+# boxplot of the similarity values between the two methods:
+boxplot_df <- as.data.frame(cbind(similarities_jac_tensor[,3],similarities_jac_tensor[,4]))
+colnames(boxplot_df) <- c("TensorFlow", "Jaccard")
+boxplot_df <- melt(boxplot_df)
+colnames(boxplot_df) <- c("Method", "Similarity_value")
+png(file=paste('./results/',my_df_name,'/','boxplot_twoMethods.png', sep = ""))
+ggplot(boxplot_df, aes(x=Method, y=Similarity_value)) + 
+  geom_boxplot()
+dev.off()
+
+### Check the correlation between the functions which jaccard is not 0 
+similarities_jac_tensor_no0jac <- subset(similarities_jac_tensor, similarity_jaccard != 0 & similarity_tensorFlow < 0.999) 
+nrow(similarities_jac_tensor)
+nrow(similarities_jac_tensor_no0jac)
+cor.test(similarities_jac_tensor_no0jac[,3],similarities_jac_tensor_no0jac[,4])
+```
+
+```{python}
+df_similarities_jac_tensor = r.similarities_jac_tensor
+matrix_clustering_tensor = df_similarities_jac_tensor.pivot_table(columns='function_2', index='function_1', values='similarity_tensorFlow').reset_index() # create the matrix with the data
+matrix_clustering_jac = df_similarities_jac_tensor.pivot_table(columns='function_2', index='function_1', values='similarity_jaccard').reset_index() # create the matrix with the data
+```
+
+```{r}
+### matrix_clustering function -> set the fist column of the matrix as index and save the matrix as .RData
+matrix_clustering <- function(method,df){
+  rownames(df) <- df$function_1
+  df <- df[-1]
+  save(df, file = paste('./results/',my_df_name,'/',"matrix_clustering_",method,"_",my_df_name,".RData",sep=""))
+  df}
+
+matrix_clustering_tensor <- matrix_clustering("tensor",py$matrix_clustering_tensor) # final tensor matrix
+matrix_clustering_jac <- matrix_clustering("jac",py$matrix_clustering_jac) # final jac matrix
+```
+
+```{r}
+h1_tensor <- Heatmap(matrix_clustering_tensor, column_names_gp =  gpar(fontsize = 0), row_names_gp = gpar(fontsize = 0), column_title = paste("Similarity TensorFlow",my_df_name,sep = " "),  name = "score", heatmap_legend_param = list(at = c(0,0.2,0.4, 0.6, 0.8,1)),col = wes_palette("Zissou1", 5, type = "discrete"))
+
+h2_jac <- Heatmap(matrix_clustering_jac, column_names_gp =  gpar(fontsize = 0), row_names_gp = gpar(fontsize = 0), column_title = paste("Similarity Jaccard",my_df_name,sep = " "),  name = "score", heatmap_legend_param = list(at = c(0,0.2,0.4, 0.6, 0.8,1)),col = wes_palette("Zissou1", 5, type = "discrete"))
+
+png(file=paste('./results/',my_df_name,'/',"heatmap_tensor_jac_",my_df_name,".png",sep=""))
+
+pushViewport(viewport(layout=grid.layout(nr=1, nc=2)))
+  pushViewport(viewport(layout.pos.row=1, layout.pos.col=1))
+    draw(h1_tensor, newpage=FALSE)
+  upViewport()
+  
+  pushViewport(viewport(layout.pos.row=1, layout.pos.col=2))
+    draw(h2_jac, newpage=FALSE)
+  upViewport()
+upViewport()
+
+dev.off()
+```
+
+###################################################
+# 4. Granularity
+###################################################
+
+```{r}
+Method <- readline(prompt="Which method do you want to use? tensor/jac: ") # type tensor or jac, depending on which method you prefer
+
+if (Method == "tensor"){
+  matrix_clustering = matrix_clustering_tensor
+  name2 = "similarity_tensorFlow"
+  } else if (Method == "jac"){
+  matrix_clustering = matrix_clustering_jac
+  name2 = "similarity_jaccard"}
+
+hc <- hclust(dist(matrix_clustering, method = "euclidean"), method = "complete") # do the cluster
+save(hc, file = paste('./results/',my_df_name,'/',"hc_",Method,"_",my_df_name,".RData",sep=""))
+
+# calculate the different granularities: high, mid, low
+if (Method == "tensor"){
+  h_high <- 0.9*max(hc$height)
+  h_mid <- 0.5*max(hc$height)
+  h_low <- 0.1*max(hc$height)
+} else if (Method == "jac"){
+  h_high <- 0.7*max(hc$height)
+  h_mid <- 0.85*max(hc$height)
+  h_low <- 0.9*max(hc$height)}
+
+granularity <- readline(prompt="Which granularity do you want to use? high/mid/low: ")
+gran <- granularity
+if (granularity == "high"){
+  granularity = h_high
+  } else if (granularity == "mid"){
+  granularity = h_mid
+  } else if (granularity == "low"){
+  granularity = h_low}
+
+cut_avg <- cutree(hc, h = granularity) # vector with the functions and their clusters
+cut_avg_df <- as.data.frame(cut_avg) # converting the vector in a dataframe
+clusters <- split(cut_avg_df, cut_avg_df$cut_avg) # convert the dataframe in a list
+#cluster <- clusters$`3`
+
+clusters_names <- data.frame()
+for (cluster in clusters) { # loop through the clusters
+  df <- tibble::rownames_to_column(cluster, "term") # rename cluster
+  if (nrow(df) == 1){
+    print(df)
+    names(df) <- c("function_1", name2)
+    df[1,2] <- 1 # the value for the similarity is 1, because this group only have one function, and its distance to itself is 1
+    name_cluster_value <- df
+    }else{
+    print(df)
+    df2 <- subset(similarities_jac_tensor, function_1 %in% df$term) # subset the functions of interest from the similarities_jac_tensor for function_1
+    df2 <- subset(df2, function_2 %in% df$term) # subset the functions of interest from df2 for function_2
+    df2 <- df2[which(df2$function_1 != df2$function_2),] # don't take the comparison within the same functions
+    if(Method == "tensor"){
+      name_cluster_tensor <- df2 %>% group_by(function_1) %>% summarise(similarity_tensorFlow=mean(similarity_tensorFlow)) # group by function_1 and do the mean
+      name_cluster_value <- name_cluster_tensor[which.max(name_cluster_tensor$similarity_tensorFlow),] # name of the cluster and score (max tensor value)
+      print(name_cluster_value)  
+    } else if (Method == "jac"){
+      name_cluster_jac <- df2 %>% group_by(function_1) %>% summarise(similarity_jaccard=mean(similarity_jaccard)) # group by function_1 and do the mean
+      name_cluster_value <- name_cluster_jac[which.max(name_cluster_jac$similarity_jaccard),] # name of the cluster and score (max jac value)
+    print(name_cluster_value)}}
+  clusters_names <- rbind(clusters_names,name_cluster_value)
+}
+
+### Prepare first dataframe with the clusters, names and scores
+clusters_names$cut_avg <- rownames(clusters_names) # insert as column
+clusters_names <- clusters_names[,c(1,3,2)] # reorder
+clusters_names[,3] <- round(clusters_names[,3],4) 
+
+### Prepare second dataframe with the details
+cut_avg_df$term <- rownames(cut_avg_df) # insert as column
+df_clusters_names_sim_term <- merge(clusters_names,cut_avg_df,by="cut_avg")
+df_clusters_names_sim_term$cut_avg <- as.numeric(df_clusters_names_sim_term$cut_avg) # convert to numeric to sort
+df_clusters_names_sim_term <- df_clusters_names_sim_term[order(df_clusters_names_sim_term$cut_avg, decreasing = F), ]
+df_clusters_names_sim_term[,3] <- round(df_clusters_names_sim_term[,3],4)
+
+### Preparing dataframes to import
+colnames(df_clusters_names_sim_term) <- c("cluster","cluster_name","score","term") # rename
+colnames(clusters_names) <-  c("cluster_name","cluster","score") # rename
+path <- paste('./results/',my_df_name,'/',"clusters_",my_df_name,"_",Method,"_",gran,".xlsx",sep="") # path 
+```
+
+```{python}
+clusters_names = r.clusters_names
+df_clusters_names_sim_term = r.df_clusters_names_sim_term
+path = r.path
+
+with pd.ExcelWriter(path) as writer: # export
+  clusters_names.to_excel(writer, sheet_name='clusters',index=False)
+  df_clusters_names_sim_term.to_excel(writer, sheet_name='details',index=False)  
+```
+
+## Dendogram of the hclust method:
+
+```{r}
+### This whole chunk is taken from: https://atrebas.github.io/post/2019-06-08-lightweight-dendrograms/ ---> minimal changes were done
+
+dendro_data_k <- function(hc, k) {
+  
+  hcdata    <-  ggdendro::dendro_data(hc, type = "rectangle")
+  seg       <-  hcdata$segments
+  labclust  <-  cutree(hc, k)[hc$order]
+  segclust  <-  rep(0L, nrow(seg))
+  heights   <-  sort(hc$height, decreasing = TRUE)
+  height    <-  mean(c(heights[k], heights[k - 1L]), na.rm = TRUE)
+  
+  for (i in 1:k) {
+    xi      <-  hcdata$labels$x[labclust == i]
+    idx1    <-  seg$x    >= min(xi) & seg$x    <= max(xi)
+    idx2    <-  seg$xend >= min(xi) & seg$xend <= max(xi)
+    idx3    <-  seg$yend < height
+    idx     <-  idx1 & idx2 & idx3
+    segclust[idx] <- i
+  }
+  
+  idx                    <-  which(segclust == 0L)
+  segclust[idx]          <-  segclust[idx + 1L]
+  hcdata$segments$clust  <-  segclust
+  hcdata$segments$line   <-  as.integer(segclust < 1L)
+  hcdata$labels$clust    <-  labclust
+  
+  hcdata
+}
+
+
+
+set_labels_params <- function(nbLabels,
+                              direction = c("tb", "bt", "lr", "rl"),
+                              fan       = FALSE) {
+  if (fan) {
+    angle       <-  360 / nbLabels * 1:nbLabels + 90
+    idx         <-  angle >= 90 & angle <= 270
+    angle[idx]  <-  angle[idx] + 180
+    hjust       <-  rep(0, nbLabels)
+    hjust[idx]  <-  1
+  } else {
+    angle       <-  rep(0, nbLabels)
+    hjust       <-  0
+    if (direction %in% c("tb", "bt")) { angle <- angle + 45 }
+    if (direction %in% c("tb", "rl")) { hjust <- 1 }
+  }
+  list(angle = angle, hjust = hjust, vjust = 0.5)
+}
+
+
+
+plot_ggdendro <- function(hcdata,
+                          direction   = c("lr", "rl", "tb", "bt"),
+                          fan         = FALSE,
+                          scale.color = NULL,
+                          branch.size = 0.3,
+                          label.size  = 1,
+                          nudge.label = 0.02, ################# 0.01
+                          expand.y    = 0.5) {
+  
+  direction <- match.arg(direction) # if fan = FALSE
+  ybreaks   <- pretty(segment(hcdata)$y, n = 2) ###################
+  ymax      <- max(segment(hcdata)$y)
+  
+  ## branches
+  p <- ggplot() +
+    geom_segment(data         =  segment(hcdata),
+                 aes(x        =  x,
+                     y        =  y,
+                     xend     =  xend,
+                     yend     =  yend,
+                     linetype =  factor(line),
+                     colour   =  factor(clust)),
+                 lineend      =  "round",
+                 show.legend  =  FALSE,
+                 size         =  branch.size)
+  
+  ## orientation
+  if (fan) {
+    p <- p +
+      coord_polar(direction = -1) +
+      scale_x_continuous(breaks = NULL,
+                         limits = c(0, nrow(label(hcdata)))) +
+      scale_y_reverse(breaks = ybreaks)
+  } else {
+    p <- p + scale_x_continuous(breaks = NULL)
+    if (direction %in% c("rl", "lr")) {
+      p <- p + coord_flip()
+    }
+    if (direction %in% c("bt", "lr")) {
+      p <- p + scale_y_reverse(breaks = ybreaks)
+    } else {
+      p <- p + scale_y_continuous(breaks = ybreaks)
+      nudge.label <- -(nudge.label)
+    }
+  }
+  
+  # labels
+  labelParams <- set_labels_params(nrow(hcdata$labels), direction, fan)
+  hcdata$labels$angle <- labelParams$angle
+  
+  p <- p +
+    geom_text(data        =  label(hcdata),
+              aes(x       =  x,
+                  y       =  y,
+                  label   =  label,
+                  colour  =  factor(clust),
+                  angle   =  angle),
+              vjust       =  labelParams$vjust,
+              hjust       =  labelParams$hjust,
+              nudge_y     =  ymax * nudge.label,
+              size        =  label.size,
+              show.legend =  F)
+  
+  # colors and limits
+  if (!is.null(scale.color)) {
+    p <- p + scale_color_manual(values = scale.color)
+  }
+  
+  ylim <- -round(ymax * expand.y, 1)
+  p    <- p + expand_limits(y = ylim)
+  
+  p
+}
+
+```
+
+```{r}
+hcdata <- dendro_data_k(hc, k=nrow(clusters_names))
+
+dendogram <- plot_ggdendro(hcdata, direction = "lr", expand.y = 0.5) +
+  xlab("") + ylab("") + ggtitle(paste("Dendogram", my_df_name, gran)) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+tiff(file=paste("./results/",my_df_name,'/',"dendro_",my_df_name,"_",Method,"_",gran,".tiff",sep=""), units="in", width=5, height=5, res=300)
+dendogram
+dev.off()
+
+png(file=paste("./results/",my_df_name,'/',"dendro_",my_df_name,"_",Method,"_",gran,".png",sep=""))
+dendogram
+dev.off()
+```
+
+###################################################
+# 5. Specific terms
+###################################################
+
+```{r}
+go_term <- readline(prompt="Please specify the go accession. Example: 'GO:0002305'. \n (Warning: if the GO accession is not valid, no results will be obtained, so in that case try again with a new term):")
+go_term0 <- go_term
+go2 <- go[,c("GO_ID","DB_Object_Symbol")] # dataframe with the go_id and the gene names
+get_genes <- subset(go2, GO_ID == go_term) # subset only by same go_ids
+get_genes <- get_genes[!duplicated(get_genes), ] # delete duplicated rows
+get_genes <- aggregate(DB_Object_Symbol ~., get_genes, toString) # aggregate gene names for each GO_IDs
+
+### get the term associated to the GO_ID:
+GO <- as.list(GOTERM)
+for(i in 1:length(GO)) # loop through the GO list
+{ if (go_term == GO[[i]]@GOID){
+  go_term_of_interest <- GO[[i]]}} # get the data frame of interest, whose GO_ID is the same as the go_term
+
+term <- go_term_of_interest@Term # get the term
+term0 <- term
+go_term <- paste("(",go_term,")",sep="") # modify with parentheses
+term <- paste(term, go_term, sep=" ") # term + go_id
+get_genes$Term <- term # insert in a new column
+get_genes_d <- get_genes[,c("Term", "DB_Object_Symbol")] # take only two columns 
+colnames(get_genes_d) <- c("Term", "Genes") 
+
+annot_tg <- my_df_annot[,c("Term","Genes")] # to rbind in the next line
+annot_term <- rbind(annot_tg,get_genes_d)
+
+annot_term$GO_ID <- as.character(lapply(annot_term$Term, function (x) {str_match_all(x, "(?<=\\().+?(?=\\))")[[1]][,1]})) # create the GO_ID column with the IDs in the functions
+all.genes2 <- na.omit(merge(annot_term, go_genes, by="GO_ID", all.x=TRUE)) # merge with the go.genes from our .gaf file
+similarity_functions_jac2 <- jaccard(all.genes2) # jaccard function
+annot_all_genes2 <- all.genes2[,2] # take only the functions
+```
+
+```{python}
+annot_all_genes = r.annot_all_genes2
+my_df_name = r.my_df_name
+go_term0 = r.go_term0
+add_path = './results/'+my_df_name+"/"+"df_term_"+go_term0+"_"+my_df_name+"_annotation_similarity_functions_tensor.txt" 
+
+sim_tensor(annot_all_genes,add_path) #  sim_tensor function
+```
+
+```{r}
+df_term_tensor  <- read.csv(file =paste('./results/',my_df_name,'/','df_term_',go_term0,"_",my_df_name,'_annotation_similarity_functions_tensor.txt', sep = ""), sep = "\t", header = F)
+df_term_jac <- similarity_functions_jac2[,c(1:3)]
+```
+
+```{python}
+no_go_jac2 = no_go_annot_jac(r.df_term_jac) # delete the GO id within functions
+```
+
+```{r}
+similarities_jac_tensor_term <- merge(df_term_tensor,py$no_go_jac2, by = c("V1","V2"),all = TRUE, sort = F, suffix = c("_tensor", "_jac")) # merging in a same dataframe the functions, and the similarities obtained with tensorFlow and with jaccard
+names(similarities_jac_tensor_term) <- c('function_1', 'function_2', 'similarity_tensorFlow', 'similarity_jaccard')
+print(cor.test(similarities_jac_tensor_term[,3],similarities_jac_tensor_term[,4])) # cor.test
+save(similarities_jac_tensor_term, file=paste("./results/",my_df_name,'/',"similarities_jac_tensor_term_",my_df_name,".RData",sep="")) # save as .RData
+
+df_sim_jac_tensor_term <- subset(similarities_jac_tensor_term, function_1 == term0) # select function_1 which are the term of the go_id that was written in the output
+
+if (Method == "tensor") {
+  new_similarities_df <- df_sim_jac_tensor_term[c(2:nrow(df_sim_jac_tensor_term)),c(2,3)] # take the col of similarity_tensorFlow
+} else if (Method == "jac"){
+  new_similarities_df <- df_sim_jac_tensor_term[c(2:nrow(df_sim_jac_tensor_term)),c(2,4)]} # take the col of similarity_jaccard
+
+new_similarities_df_cutoff <-new_similarities_df[order(new_similarities_df[,2], decreasing = TRUE), ] # order decreasing
+val_cut_off <- as.numeric(readline(prompt="Insert a cut off (from 0 to 1) for the score of your clusters:")) # insert a cutoff
+df_functions_clusters_cutoff <- subset(new_similarities_df_cutoff[2:nrow(new_similarities_df_cutoff),], new_similarities_df_cutoff[2] > val_cut_off) # functions with a score > cutoff
+
+cut_avg_df2 <- cut_avg_df # copy of the clustered functions dataframe based on granularitu
+colnames(cut_avg_df2) <- c("cut_avg","function_2")
+similarities_df_cut_avg <- merge(new_similarities_df,cut_avg_df2, by="function_2") # new similarity values calculated based on the desired term. The clusters are the ones we already got
+
+clusters2 <- split(similarities_df_cut_avg, similarities_df_cut_avg$cut_avg) # list of clusters
+clusters_total <- data.frame() # to fulfill in the loop with the name of the cluster, the score and the number of the cluster
+for (cluster in clusters2) {
+  max_c <- cluster[which.max(cluster[,2]),] # get the max similarity value
+  name_cluster <- max_c$function_2 # qet the function_2, or name of the function with max similarity value
+  mean_sim <- mean(cluster[,2]) # get the mean of the similarity values for the cluster
+  cluster_number <- unique(cluster$cut_avg) # get the number of the cluster
+  df_name_mean <- data.frame(name_cluster,mean_sim,cluster_number) # create a dataframe with the variables
+  clusters_total <- rbind(clusters_total,df_name_mean)} # rbind the ddata from the different clusters
+
+clusters_total_order <- clusters_total[order(clusters_total$mean_sim, decreasing = TRUE), ] 
+print(clusters_total_order) # print the cluster names, scores and cluster numbers
+
+path2 <- paste("./results/",my_df_name,'/',"clusters_specific_term_",my_df_name,"_",Method,"_",gran,".xlsx",sep="") # path 
+term01 <- paste("cut off -", term0, sep=" ")
+term02 <- paste("cluster -", term0, sep=" ")
+```
+
+```{python}
+df_functions_clusters_cutoff = r.df_functions_clusters_cutoff
+clusters_total_order = r.clusters_total_order
+term01 = r.term01
+term02 = r.term02
+path2 = r.path2
+
+with pd.ExcelWriter(path2) as writer: # export
+  df_functions_clusters_cutoff.to_excel(writer, sheet_name=term01,index=False)
+  clusters_total_order.to_excel(writer, sheet_name=term02,index=False)  
+```
+
+```{r}
+png(file=paste("./results/",my_df_name,'/',"barplot_",my_df_name,"_", go_term0,".png",sep=""))
+clusters_total_order %>%
+  ggplot(aes(x = reorder(name_cluster, mean_sim), y = mean_sim,fill=name_cluster)) +
+  geom_bar(stat = 'identity') +
+  xlab("Clusters") + ylab(paste("Similarity TensorFlow")) + coord_flip() + theme(legend.position = "none",axis.text.y=element_text(size=12)) 
+dev.off()
+```
+
+###################################################
+# 6. Comparing the results 
+###################################################
+
+```{r}
+# https://jokergoo.github.io/simplifyEnrichment/articles/simplifyEnrichment.html
+
+go_id = all_genes_my_df_annot[,1] # obtain the GO_ID of our list
+mat = GO_similarity(go_id) # similarity matrix
+png(file=paste("./results/",my_df_name,'/',"simpEnr_",my_df_name,".png", sep = ""))
+df_simply_enr = simplifyGO(mat) # obtain de dataframe
+dev.off()
+clusters_simp_enr <- split(df_simply_enr[,c(2,3)], df_simply_enr$cluster)  # list of the clusters
+
+cut_our_ks <- cutree(hc, k = max(df_simply_enr[,3])) # cluster with same k as the dataframe obtained with simplifyEnrichment
+cut_our_ks_df <- as.data.frame(cut_our_ks) # converting the vector in a dataframe
+cut_our_ks_df$term <- rownames(cut_our_ks_df) 
+colnames(cut_our_ks_df) <- c("cluster","term")
+cut_our_ks_df <- cut_our_ks_df[,c(2,1)] # reorder columns
+rownames(cut_our_ks_df) <- NULL
+clusters_our_ks <- split(cut_our_ks_df, cut_our_ks_df$cluster) # list of the clusters
+```
+
+
+```{r, warning=FALSE}
+df_comp_chi <- data.frame()
+for(m1 in 1:(max(df_simply_enr[,3]))){
+  v_se <- clusters_simp_enr[[m1]][,1] # vector per cluster with the term from the clusters_simp_enr list
+  for(m2 in 1:(max(df_simply_enr[,3]))){
+    v_oks <- clusters_our_ks[[m2]][,1] # vector per cluster with the term from the clusters_our_ks list
+    inter_s <- length(intersect(v_se, v_oks))
+    no_v_oks <- length(v_oks) - inter_s
+    yes_v_se <- length(v_se) - inter_s
+    no_v_se <- nrow(cut_our_ks_df) - (inter_s + no_v_oks + yes_v_se)
+    #print(matrix(c(inter_s,no_v_oks,yes_v_se,no_v_se),ncol=2,byrow=TRUE))
+    chiq_test <- chisq.test(matrix(c(inter_s,no_v_oks,yes_v_se,no_v_se),ncol=2,byrow=TRUE))
+    if (chiq_test$p.value <= 0.05){print(paste("These clusters can be considered as the same between simplifyEnrichment and our tool: ", m1,", ", m2, sep = ""))}
+    df_comp_chi <- rbind(df_comp_chi,chiq_test$p.value)
+  }}
+
+(length(which(df_comp_chi[,1] > 0.05))/nrow(df_comp_chi))*100 # the results are the number of chi tests which are not significant, meaning that there are no evidences to think that there are great differences between the performance of the clustering obtained with our method and the SimplidyEnrich method
+```
+
+##################################################################################
+
+```{r}
+sessionInfo()
+```
+
+##################################################################################
+
