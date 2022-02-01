@@ -327,13 +327,13 @@ save(hc, file = paste('./results/',my_df_name,'/',"hc_",Method,"_",my_df_name,".
 
 # calculate the different granularities: high, mid, low
 if (Method == "tensor"){
-  h_high <- 0.9*max(hc$height)
+  h_high <- 0.1*max(hc$height)
   h_mid <- 0.5*max(hc$height)
-  h_low <- 0.1*max(hc$height)
+  h_low <- 0.9*max(hc$height)
 } else if (Method == "jac"){
-  h_high <- 0.7*max(hc$height)
+  h_low <- 0.8*max(hc$height)
   h_mid <- 0.85*max(hc$height)
-  h_low <- 0.9*max(hc$height)}
+  h_high <- 0.9*max(hc$height)}
 
 granularity <- readline(prompt="Which granularity do you want to use? high/mid/low: ")
 gran <- granularity
@@ -701,6 +701,9 @@ for(m1 in 1:(max(df_simply_enr[,3]))){
   }}
 
 (length(which(df_comp_chi[,1] > 0.05))/nrow(df_comp_chi))*100 # the results are the number of chi tests which are not significant, meaning that there are no evidences to think that there are great differences between the performance of the clustering obtained with our method and the SimplidyEnrich method
+
+# To improve: Apply a correction for the p-value in multiple testing (e.g. bonferroni or fdr)
+
 ```
 
 ##################################################################################
